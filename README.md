@@ -6,52 +6,50 @@ Another benefit is that reports are not stored in a file withing the web directo
 
 ## Installation
 
-Simply download the PHP script and put it in your web directory. Then add `report-uri /csp.php;` to the end of your CSP header.
+Simply download the PHP script and put it in your web directory (e.g. `/var/www/yourapp/csp.php`). Then add `report-uri /csp.php;` to the end of your CSP header.
+
+```
+<?php
+    # collect data from post request
+    $data = file_get_contents('php://input');
+
+    # set options for syslog daemon
+    openlog('cspreport', LOG_NDELAY, LOG_USER);
+
+    # send warning about csp report
+    syslog(LOG_WARNING, $data);
+?>
+```
 
 ### Setting up syslog
 
-On Ubuntu 16.04 server, rsyslog is installed by default. Simply create a new config file with the following content at `/etc/rsyslog.d/30-csp.conf`.
+On Ubuntu 16.04 server, rsyslog is installed by default. Simply create a new config file with the following content at `/etc/rsyslog.d/01-csp.conf`.
 
 ```
 # Set APPLICATION.SEVERITY and define where the log entry should be written to
-cspreport.warn                      /var/log/apache2/csp.log
-
-# And if you want to forward it to a server like graylog for analysis as well
-#cspreport.warn          @graylog.lan:514;RSYSLOG_SyslogProtocol23Format
+:syslogtag, isequal, "cspreport:" {
+  :msg, contains, "csp-report" {
+    *.*     /var/log/csp/csp.log                                # to local file
+    #*.*    @graylog.lan:514;RSYSLOG_SyslogProtocol23Format     # to server (syslog, graylog, etc.)
+  }
+  stop
+}
 ```
 
-Afterwards, run `sudo service rsyslog restart` and your CSP violations should be sent to /var/log/apache2/csp.log.
-
-### Not using Apache2?
-
-If you're not using Apache as a webserver, there are a couple of changes you should do.
-
-  * replace the logfile location in your rsyslog config with one that's not located in the apache2 log folder
-  * create a logrotate config for your logfile
+Afterwards, run `sudo service rsyslog restart` and your CSP violations should be sent to /var/log/csp.log.
 
 ### Configuring logrotate
 
-If you're using Apache2, the logfile is caught automatically by logrotate, as it falls under the rotation rule matching `/var/log/apache2/*.log`. If you need to setup your own rotation schedule for files (to avoid csp report files filling your disk space), use the apache template in `/etc/logrotate.d/apache2` as a basis and go from there.
+In order to avoid the `csp.log` file filling your entire disk with violations, configure a log rotation schedule like the following in `/etc/logrotate.d/cspreport`.
 
 ```
-/var/log/apache2/*.log {
-        daily
-        missingok
-        rotate 14
-        compress
-        delaycompress
-        notifempty
-        create 640 root adm
-        sharedscripts
-        postrotate
-                if /etc/init.d/apache2 status > /dev/null ; then \
-                    /etc/init.d/apache2 reload > /dev/null; \
-                fi;
-        endscript
-        prerotate
-                if [ -d /etc/logrotate.d/httpd-prerotate ]; then \
-                        run-parts /etc/logrotate.d/httpd-prerotate; \
-                fi; \
-        endscript
+/var/log/csp/*.log {
+  rotate 12
+  monthly
+  compress
+  missingok
+  notifempty
 }
 ```
+
+Afterwards, run `sudo logrotate /etc/logrotate.d/cspreport` to make sure there are no errors in your logrotate config.
